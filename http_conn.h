@@ -20,7 +20,12 @@
 #include <errno.h>
 #include "locker.h"
 #include <sys/uio.h>
+#include <string>
+#include <vector>
+#include <iostream>
+#include <fstream>
 
+using namespace std;
 class http_conn{
 public:
     static const int FILENAME_LEN = 200;
@@ -63,6 +68,8 @@ public:
     // 非阻塞写操作
     bool write();   
 
+    bool writefile(bool);
+
     
 private:
     void init();
@@ -84,6 +91,7 @@ private:
     bool add_content_length( int content_length );
     bool add_linger();
     bool add_blank_line();
+    bool add_the_content();
 
 
 
@@ -132,6 +140,16 @@ private:
     struct iovec m_iv[2];
     // 被写内存块的数量
     int m_iv_count;
+public:
+    // 地点
+    char* place;
+    // 类型
+    int lable=0;
+    vector<string> AllLables;
+    // 是否出现
+    bool happend = false;
+    // 人数
+    int people_num=0;
 
 
 };

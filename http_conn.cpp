@@ -44,6 +44,25 @@ void modfd(int epollfd, int fd, int flag){
     epoll_ctl(epollfd, EPOLL_CTL_MOD, fd, &event);
 }
 
+bool http_conn::writefile(bool append){
+    fstream destFile;
+    if(!append) destFile.open("/home/liudong/Mywebserver/version_0.22/write.txt",ios::out); //以文本模式打开out.txt备写
+    else destFile.open("/home/liudong/Mywebserver/version_0.22/write.txt",ios::out | ios::app);
+    if(!destFile.is_open()) {
+        destFile.close(); //程序结束前不能忘记关闭以前打开过的文件
+        cout << "error opening destination file." << endl;
+        return false;
+    }
+    destFile<<"Place: "<<place<<"\n";
+    // cout<<AllLables.size()<<" "<<sizeof(AllLables)<<"\n";
+    destFile<<"Lable: "<<AllLables[lable]<<"\n";
+    destFile<<"Ishappend: "<<(happend ? "true" : "false")<<"\n";
+    destFile<<"PeopleNum: "<<people_num<<"\n";
+    destFile.close();
+
+    return true;
+}
+
 int http_conn::m_user_count = 0;
 int http_conn::m_epollfd = -1;
 
@@ -86,10 +105,19 @@ void http_conn::init(){
     memset(m_read_buf, '\0', READ_BUFFER_SIZE);
     memset(m_write_buf, '\0', WRITE_BUFFER_SIZE);
     memset(m_real_file, '\0', FILENAME_LEN);
+
+    // 类型
+    lable=0;
+    AllLables = {"人流量", "酒精", "烟雾"};
+    // 是否出现
+    happend = false;
+    // 人数
+    people_num=0;
 }
 
 // 从状态机，用于解析出一行内容
 http_conn::LINE_STATUS http_conn::parse_line(){
+    // cout<<"parse_line"<<endl;
     char temp;
 
     for(;m_checked_idx < m_read_idx; ++m_checked_idx){
@@ -129,6 +157,7 @@ http_conn::LINE_STATUS http_conn::parse_line(){
 
 // 无阻塞循环读取用户数据直到无数据可读或者对方关闭连接
 bool http_conn::read(){
+    // cout<<"read"<<endl;
     if(m_read_idx >= READ_BUFFER_SIZE){
         return false;
     }
@@ -155,6 +184,7 @@ bool http_conn::read(){
 
 // 解析请求行，获得请求方法、目标URL、以及HTTP版本号
 http_conn::HTTP_CODE http_conn::parse_request_line(char* text){
+    // cout<<"parse_request_line"<<endl;
     // 如果请求里没有空格和'\t'字符，这个请求肯定有问题
     m_url = strpbrk(text, " \t");
     if(!m_url){
@@ -208,11 +238,16 @@ http_conn::HTTP_CODE http_conn::parse_headers(char* text){
     if(text[0] == '\0'){
         // 如果 HTTP 请求有消息体，还需要读取m_content_length字节的消息体，
         // 状态机转移到CHECK_STATE_CONTENT的状态
+        // cout<<"parse"<<endl;
         if(m_content_length != 0){
+            //cout<<"m_content_length "<<m_content_length<<endl;
             m_check_state = CHECK_STATE_CONTENT;
             return NO_REQUEST;
         }
         // 否则说明已经得到了一个完整的HTTP请求
+        cout<<"begin write"<<endl;
+        writefile(false);
+        cout<<"end write"<<endl;
         return GET_REQUEST;
     }
     // 处理Connection头部字段
@@ -237,6 +272,34 @@ http_conn::HTTP_CODE http_conn::parse_headers(char* text){
         text += strspn(text, " \t");
         m_host = text;
     }
+
+    
+    // 处理Place头部字段
+    else if(strncasecmp(text, "Place:", 6) == 0){
+        text += 6; // move to the behind of "Host:"
+
+        text += strspn(text, " \t");
+        place = text;
+    }
+    // 处理Lable头部字段
+    else if(strncasecmp(text, "Lable:", 6) == 0){
+        text += 6; // move to the behind of "Host:"
+        text += strspn(text, " \t");
+        lable = atoi(text);
+        cout<<"lable "<<lable<<endl;
+    }
+    // 处理Ishappend头部字段
+    else if(strncasecmp(text, "Ishappend:", 10) == 0){
+        text += 10; // move to the behind of "Host:"
+        text += strspn(text, " \t");
+        happend = text[0] == 't' ? true : false;
+    }
+    // 处理PeopleNum头部字段
+    else if(strncasecmp(text, "PeopleNum:", 10) == 0){
+        text += 10; // move to the behind of "Host:"
+        text += strspn(text, " \t");
+        people_num = atol(text);
+    }
     else{
         printf("unknown headers %s\n", text);
     }
@@ -246,6 +309,10 @@ http_conn::HTTP_CODE http_conn::parse_headers(char* text){
 
 // 我们没有真正解析HTTP请求的消息体，只是判断它是否被完整地读入了 
 http_conn::HTTP_CODE http_conn::parse_content(char* text){
+    // cout<<"parse_content"<<endl;
+    // cout<<"begin write"<<endl;
+    // writefile(false);
+    // cout<<"end write"<<endl;
     if(m_read_idx >= (m_content_length + m_checked_idx)){
         text[m_content_length] = '\0';
         return GET_REQUEST;
@@ -255,6 +322,7 @@ http_conn::HTTP_CODE http_conn::parse_content(char* text){
 
 // 主状态机 
 http_conn::HTTP_CODE http_conn::process_read(){
+    cout<<"process read"<<endl;
     LINE_STATUS line_status = LINE_OK; // 记录当前行的读取状态 
     HTTP_CODE ret = NO_REQUEST;        // 记录HTTP请求的处理结果
     char* text = 0;
@@ -263,7 +331,7 @@ http_conn::HTTP_CODE http_conn::process_read(){
         text = get_line();
         m_start_line = m_checked_idx;
         printf("got 1 http line: %s\n", text);
-
+        // cout<<people_num<<endl;
         switch (m_check_state)
         {
         // 分析请求行
@@ -406,12 +474,21 @@ bool http_conn::add_linger(){
 bool http_conn::add_blank_line(){
     return add_response( "%s", "\r\n");
 }
+// 添加所有其他数据
+bool http_conn::add_the_content(){
+    return add_response( "Place: %s\r\n", place);
+    return add_response( "Lable: %s\r\n", AllLables[lable]);
+    return add_response( "Ishappend: %s\r\n", (happend == true) ? "true" : "false");
+    return add_response( "PeopleNum: %s\r\n", people_num);
+}
 
 // 根据服务器处理HTTP请求的结果，决定返回给客户端的内容
 bool http_conn::process_write( HTTP_CODE ret ){
+    cout<<"process write"<<endl;
     switch (ret)
     {
     case INTERNAL_ERROR:
+        cout<<"500"<<endl;
         add_status_line(500, error_500_title); // 服务器端执行请求发生错误，比较笼统
         add_headers(strlen(error_500_form));
         if(!add_content(error_500_form)){
@@ -419,6 +496,7 @@ bool http_conn::process_write( HTTP_CODE ret ){
         }
         break;
     case BAD_REQUEST:
+        cout<<"400"<<endl;
         add_status_line(400, error_400_title); // 客户端请求语法错误 
         add_headers(strlen(error_400_form));
         if(!add_content(error_400_form)){
@@ -426,6 +504,7 @@ bool http_conn::process_write( HTTP_CODE ret ){
         }
         break;
     case NO_RESOURCE:
+        cout<<"404"<<endl;
         add_status_line(404, error_404_title); // 服务器上无法找到请求的资源
         add_headers(strlen(error_404_form));
         if(!add_content(error_404_form)){
@@ -433,6 +512,7 @@ bool http_conn::process_write( HTTP_CODE ret ){
         }
         break;
     case FORBIDDEN_REQUEST:
+        cout<<"403"<<endl;
         add_status_line(403, error_403_title); // 服务器端拒绝访问
         add_headers(strlen(error_403_form));
         if(!add_content(error_403_form)){
@@ -441,6 +521,7 @@ bool http_conn::process_write( HTTP_CODE ret ){
         break;
     
     case FILE_REQUEST:
+        cout<<"200"<<endl;
         add_status_line(200, ok_200_title);
         if(m_method == HEAD) return true;
         if(m_file_stat.st_size != 0){
